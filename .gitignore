@@ -1,0 +1,25 @@
+# Virtual environment
+venv/
+env/
+
+# Environment variables
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Project files
+applied_jobs.csv
+logs/
+*.log
+
+# IDE
+.vscode/
+.DS_Store
+
+# Testing
+.pytest_cache/
