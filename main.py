@@ -7,6 +7,7 @@ from email_sender import send_application
 from database import (
     initialize_database,
     is_already_applied,
+    is_email_already_contacted,  # ← Email deduplication
     record_application,
     get_application_stats,
     get_todays_application_count
@@ -24,17 +25,8 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-# ============================================================
-# CONFIGURE YOUR JOB BOARD URLs HERE
-# ============================================================
-JOB_URLS = [
-   'https://jobs.nvoids.com/index.jsp',  # Main page - latest jobs
-    'https://jobs.nvoids.com/index.jsp?p=1',  # Page 2
-    'https://jobs.nvoids.com/index.jsp?p=2',  # Page 3
-]
-
 def process_applications():
-    """Main job application workflow."""
+    """Main job application workflow with email-based deduplication."""
     print(f"\n{'='*70}")
     print(f"Job Application Bot - Cycle Started")
     print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -57,84 +49,118 @@ def process_applications():
     
     print(f"Applications sent today: {today_count}/{MAX_APPLICATIONS_PER_DAY}\n")
     
-    # Check if URLs are configured
-    if not JOB_URLS:
-        print("⚠ No job board URLs configured!")
-        print("Please add URLs to the JOB_URLS list in main.py")
-        logging.warning("No job URLs configured")
-        return
-    
     total_found = 0
     total_applied = 0
-    total_skipped = 0
+    total_skipped_job_id = 0
+    total_skipped_email = 0
     
-    # Process each job board URL
-    for url in JOB_URLS:
-        print(f"\n📋 Scraping: {url}")
-        logging.info(f"Processing URL: {url}")
+    # ============================================================
+    # SEARCH-BASED SCRAPING (uses SEARCH_KEYWORDS from config.py)
+    # ============================================================
+    print("🔍 Starting automated job search...\n")
+    
+    # Call scraper - it will use Selenium to search with configured keywords
+    jobs = scrape_jobs(None)  # Pass None - scraper uses SEARCH_KEYWORDS internally
+    
+    total_found = len(jobs)
+    print(f"\n{'='*70}")
+    print(f"Search Complete: Found {total_found} relevant jobs")
+    print(f"{'='*70}\n")
+    
+    if total_found == 0:
+        print("⚠ No jobs found. Check:")
+        print("  1. SEARCH_KEYWORDS in config.py")
+        print("  2. TARGET_KEYWORDS filtering (might be too strict)")
+        print("  3. Website accessibility")
+        print("  4. Internet connection")
+        return
+    
+    print(f"Processing {total_found} jobs for applications...\n")
+    
+    # Process each job
+    for job in jobs:
+        job_id = job['job_id']
+        email = job['email'].lower()
         
-        jobs = scrape_jobs(url)
-        print(f"   Found {len(jobs)} jobs with email addresses\n")
-        total_found += len(jobs)
+        # ============================================================
+        # CHECK 1: Job ID Duplication
+        # ============================================================
+        if is_already_applied(job_id):
+            print(f"   ⊘ Skipped: {job['title'][:50]}... (job ID {job_id} already applied)")
+            total_skipped_job_id += 1
+            continue
         
-        # Process each job
-        for job in jobs:
-            job_id = job['job_id']
-            
-            # Check if already applied
-            if is_already_applied(job_id):
-                print(f"   ⊘ Skipped: {job['title']} at {job['company']} (already applied)")
-                total_skipped += 1
-                continue
-            
-            # Check daily limit again
-            if get_todays_application_count() >= MAX_APPLICATIONS_PER_DAY:
-                print(f"\n⚠ Daily limit reached during cycle")
-                logging.warning("Daily limit reached mid-cycle")
-                break
-            
-            # Send application
-            print(f"   → Applying: {job['title']} at {job['company']}")
-            success = send_application(
-                job['title'],
-                job['company'],
-                job['email']
-            )
-            
-            # Record application
-            status = 'sent' if success else 'failed'
-            record_application(
-                job_id,
-                job['title'],
-                job['company'],
-                job['email'],
-                status
-            )
-            
-            if success:
-                total_applied += 1
-            
-            # Rate limiting
-            print(f"   ⏱ Waiting {DELAY_BETWEEN_EMAILS} seconds before next email...")
+        # ============================================================
+        # CHECK 2: Email Duplication
+        # ============================================================
+        if is_email_already_contacted(email):
+            print(f"   ⊘ Skipped: {job['title'][:50]}... (email {email} already contacted)")
+            total_skipped_email += 1
+            continue
+        
+        # ============================================================
+        # CHECK 3: Daily Limit
+        # ============================================================
+        if get_todays_application_count() >= MAX_APPLICATIONS_PER_DAY:
+            print(f"\n⚠ Daily limit reached during cycle ({MAX_APPLICATIONS_PER_DAY})")
+            logging.warning("Daily limit reached mid-cycle")
+            break
+        
+        # ============================================================
+        # ALL CHECKS PASSED: Send Application
+        # ============================================================
+        print(f"\n   → Applying to Job #{total_applied + 1}")
+        print(f"      Title: {job['title'][:60]}")
+        print(f"      Company: {job['company']}")
+        print(f"      Email: {email}")
+        
+        success = send_application(
+            job['title'],
+            job['company'],
+            email
+        )
+        
+        # Record application
+        status = 'sent' if success else 'failed'
+        record_application(
+            job_id,
+            job['title'],
+            job['company'],
+            email,
+            status
+        )
+        
+        if success:
+            total_applied += 1
+            print(f"      ✓ Status: Application sent")
+        else:
+            print(f"      ✗ Status: Failed to send")
+        
+        # Rate limiting
+        if total_applied < MAX_APPLICATIONS_PER_DAY:
+            print(f"      ⏱ Waiting {DELAY_BETWEEN_EMAILS} seconds...")
             time.sleep(DELAY_BETWEEN_EMAILS)
     
-    # Print summary
+    # Print comprehensive summary
     print(f"\n{'='*70}")
     print("Cycle Complete - Summary")
     print(f"{'='*70}")
-    print(f"Jobs found with emails: {total_found}")
-    print(f"Applications sent: {total_applied}")
-    print(f"Already applied (skipped): {total_skipped}")
+    print(f"\nJobs Found: {total_found}")
+    print(f"Applications Sent: {total_applied}")
+    print(f"Skipped (duplicate job ID): {total_skipped_job_id}")
+    print(f"Skipped (duplicate email): {total_skipped_email}")
+    print(f"Total Skipped: {total_skipped_job_id + total_skipped_email}")
     
-    # Overall stats
+    # Overall statistics
     stats = get_application_stats()
-    print(f"\nOverall Statistics:")
+    print(f"\nOverall Statistics (All Time):")
     print(f"  Total applications: {stats['total']}")
     print(f"  Successfully sent: {stats['sent']}")
     print(f"  Failed: {stats['failed']}")
+    print(f"  Unique emails contacted: {stats['unique_emails']}")
     print(f"{'='*70}\n")
     
-    logging.info(f"Cycle complete: {total_applied} sent, {total_skipped} skipped")
+    logging.info(f"Cycle complete: {total_applied} sent, {total_skipped_job_id} skipped (job ID), {total_skipped_email} skipped (email)")
 
 def run_once():
     """Run the bot once (for testing)."""
@@ -144,16 +170,16 @@ def run_once():
 def run_scheduled():
     """Run the bot on a schedule."""
     print("\n🤖 Job Application Bot Started")
-    print("📅 Schedule: Every 30 minutes")
+    print("📅 Schedule: Every 2 hours")
     print("⏹ Press Ctrl+C to stop\n")
     
     # Run immediately on start
     process_applications()
     
-    # Schedule every 30 minutes
-    schedule.every(30).minutes.do(process_applications)
+    # Schedule every 2 hours (recommended for Selenium)
+    schedule.every(2).hours.do(process_applications)
     
-    logging.info("Scheduler started - running every 30 minutes")
+    logging.info("Scheduler started - running every 2 hours")
     
     try:
         while True:
