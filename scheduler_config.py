@@ -166,7 +166,7 @@ def use_preset_business_hours():
     """9 AM - 6 PM, Monday-Friday (default office hours)"""
     global START_TIME, END_TIME, DAYS_TO_RUN
     START_TIME = dt_time(7, 0)
-    END_TIME = dt_time(16, 0)
+    END_TIME = dt_time(23, 59)
     DAYS_TO_RUN = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
     print("✓ Preset: Business Hours (9 AM - 6 PM, Mon-Fri)")
 
@@ -174,7 +174,7 @@ def use_preset_extended_hours():
     """8 AM - 8 PM, Monday-Friday"""
     global START_TIME, END_TIME, DAYS_TO_RUN
     START_TIME = dt_time(8, 0)
-    END_TIME = dt_time(20, 0)
+    END_TIME = dt_time(22, 0)
     DAYS_TO_RUN = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
     print("✓ Preset: Extended Hours (8 AM - 8 PM, Mon-Fri)")
 
